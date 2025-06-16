@@ -1,0 +1,15 @@
+# Package build artifacts
+pkg/
+src/
+*.AppImage
+*.tar.gz
+*.tar.xz
+*.tar.zst
+
+# Backup files
+*~
+*.bak
+
+# Generated files
+*.log
+squashfs-root/ 

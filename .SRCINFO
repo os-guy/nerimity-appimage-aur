@@ -1,0 +1,21 @@
+pkgbase = nerimity-appimage
+	pkgdesc = Nerimity - A modern chat application (AppImage)
+	pkgver = 1.6.0
+	pkgrel = 1
+	url = https://github.com/Nerimity/nerimity-desktop
+	install = nerimity-appimage.install
+	arch = x86_64
+	license = custom:unknown
+	makedepends = curl
+	makedepends = jq
+	depends = fuse2
+	depends = hicolor-icon-theme
+	depends = gtk-update-icon-cache
+	depends = desktop-file-utils
+	provides = nerimity
+	conflicts = nerimity
+	options = !strip
+	source = nerimity-appimage-1.6.0.AppImage::https://github.com/Nerimity/nerimity-desktop/releases/download/v1.6.0/Nerimity-1.6.0.AppImage
+	sha256sums = SKIP
+
+pkgname = nerimity-appimage
