@@ -1,0 +1,83 @@
+name: Update AUR Package
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Run daily at midnight
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  update-package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout GitHub repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl jq base-devel
+
+      - name: Set up SSH key for AUR
+        uses: webfactory/ssh-agent@v0.7.0
+        with:
+          ssh-private-key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "${{ vars.AUR_USERNAME }}"
+          git config --global user.email "${{ vars.AUR_EMAIL }}"
+
+      - name: Check for updates
+        id: check-updates
+        run: |
+          # Get current version from PKGBUILD
+          CURRENT_VERSION=$(grep -oP '^pkgver=\K.*' PKGBUILD)
+          
+          # Get latest version from GitHub API
+          LATEST_VERSION=$(curl -s "https://api.github.com/repos/Nerimity/nerimity-desktop/releases/latest" | jq -r .tag_name | sed 's/^v//g')
+          
+          echo "Current version: $CURRENT_VERSION"
+          echo "Latest version: $LATEST_VERSION"
+          
+          if [ "$CURRENT_VERSION" != "$LATEST_VERSION" ]; then
+            echo "update_needed=true" >> $GITHUB_OUTPUT
+            echo "latest_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
+          else
+            echo "update_needed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update package
+        if: steps.check-updates.outputs.update_needed == 'true'
+        run: |
+          # Update PKGBUILD
+          sed -i "s/^pkgver=.*/pkgver=${{ steps.check-updates.outputs.latest_version }}/" PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
+          
+          # Generate .SRCINFO
+          makepkg --printsrcinfo > .SRCINFO
+          
+          # Commit changes to GitHub
+          git add PKGBUILD .SRCINFO
+          git commit -m "Update to version ${{ steps.check-updates.outputs.latest_version }}"
+          git push
+
+      - name: Clone AUR repository
+        if: steps.check-updates.outputs.update_needed == 'true'
+        run: |
+          # Make sure SSH knows about aur.archlinux.org
+          mkdir -p ~/.ssh
+          ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts
+          
+          # Clone AUR repository to a temporary directory
+          git clone ssh://aur@aur.archlinux.org/nerimity-appimage.git aur-repo
+          
+          # Copy updated files to AUR repository
+          cp PKGBUILD .SRCINFO nerimity-appimage.install update_srcinfo.sh README.md aur-repo/
+          
+          # Commit and push to AUR
+          cd aur-repo
+          git add .
+          git commit -m "Update to version ${{ steps.check-updates.outputs.latest_version }}"
+          git push 
