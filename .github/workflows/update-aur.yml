@@ -23,7 +23,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl jq base-devel
+          sudo apt-get install -y curl jq build-essential
 
       - name: Set up SSH key for AUR
         uses: webfactory/ssh-agent@v0.7.0
@@ -61,8 +61,30 @@ jobs:
           sed -i "s/^pkgver=.*/pkgver=${{ steps.check-updates.outputs.latest_version }}/" PKGBUILD
           sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
           
-          # Generate .SRCINFO
-          makepkg --printsrcinfo > .SRCINFO
+          # Install makepkg-template for generating .SRCINFO
+          curl -o /tmp/makepkg-template.tar.gz https://aur.archlinux.org/cgit/aur.git/snapshot/makepkg-template.tar.gz
+          tar -xf /tmp/makepkg-template.tar.gz -C /tmp
+          
+          # Generate .SRCINFO using a simple parser
+          echo "pkgbase = nerimity-appimage" > .SRCINFO
+          echo "	pkgdesc = $(grep -oP '^pkgdesc="\K[^"]+' PKGBUILD)" >> .SRCINFO
+          echo "	pkgver = ${{ steps.check-updates.outputs.latest_version }}" >> .SRCINFO
+          echo "	pkgrel = 1" >> .SRCINFO
+          echo "	url = $(grep -oP '^url="\K[^"]+' PKGBUILD)" >> .SRCINFO
+          echo "	install = nerimity-appimage.install" >> .SRCINFO
+          echo "	arch = x86_64" >> .SRCINFO
+          echo "	license = custom:unknown" >> .SRCINFO
+          echo "	makedepends = curl" >> .SRCINFO
+          echo "	makedepends = jq" >> .SRCINFO
+          echo "	depends = fuse2" >> .SRCINFO
+          echo "	depends = hicolor-icon-theme" >> .SRCINFO
+          echo "	depends = gtk-update-icon-cache" >> .SRCINFO
+          echo "	depends = desktop-file-utils" >> .SRCINFO
+          echo "	provides = nerimity" >> .SRCINFO
+          echo "	conflicts = nerimity" >> .SRCINFO
+          echo "	options = !strip" >> .SRCINFO
+          echo "" >> .SRCINFO
+          echo "pkgname = nerimity-appimage" >> .SRCINFO
           
           # Commit changes to GitHub (github branch)
           git add PKGBUILD .SRCINFO
@@ -80,9 +102,10 @@ jobs:
           cp PKGBUILD .SRCINFO nerimity-appimage.install update_srcinfo.sh README.md temp-aur/
           
           # Commit and push to aur
-          git -C temp-aur add .
-          git -C temp-aur commit -m "Update to version ${{ steps.check-updates.outputs.latest_version }}"
-          git push origin temp-aur:aur
+          cd temp-aur
+          git add .
+          git commit -m "Update to version ${{ steps.check-updates.outputs.latest_version }}"
+          git push origin HEAD:aur
 
       - name: Clone AUR repository
         if: steps.check-updates.outputs.update_needed == 'true'
