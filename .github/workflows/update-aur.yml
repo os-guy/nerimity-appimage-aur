@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '0 0 * * *'  # Run daily at midnight
   workflow_dispatch:  # Allow manual triggering
+  push:
+    branches:
+      - github
+    paths-ignore:
+      - '.github/**'  # Avoid recursion
 
 jobs:
   update-package:
@@ -13,6 +18,7 @@ jobs:
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
+          ref: github  # Explicitly checkout the github branch
 
       - name: Install dependencies
         run: |
@@ -48,7 +54,7 @@ jobs:
             echo "update_needed=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Update package
+      - name: Update package in github branch
         if: steps.check-updates.outputs.update_needed == 'true'
         run: |
           # Update PKGBUILD
@@ -58,10 +64,25 @@ jobs:
           # Generate .SRCINFO
           makepkg --printsrcinfo > .SRCINFO
           
-          # Commit changes to GitHub
+          # Commit changes to GitHub (github branch)
           git add PKGBUILD .SRCINFO
           git commit -m "Update to version ${{ steps.check-updates.outputs.latest_version }}"
-          git push
+          git push origin github
+
+      - name: Update master branch for AUR
+        if: steps.check-updates.outputs.update_needed == 'true'
+        run: |
+          # Create a temporary branch from master
+          git fetch origin master
+          git checkout -b temp-master origin/master
+          
+          # Copy updated files to master branch
+          cp PKGBUILD .SRCINFO nerimity-appimage.install update_srcinfo.sh README.md temp-master/
+          
+          # Commit and push to master
+          git -C temp-master add .
+          git -C temp-master commit -m "Update to version ${{ steps.check-updates.outputs.latest_version }}"
+          git push origin temp-master:master
 
       - name: Clone AUR repository
         if: steps.check-updates.outputs.update_needed == 'true'
