@@ -1,6 +1,6 @@
 pkgbase = nerimity-appimage
 	pkgdesc = Nerimity - A modern chat application (AppImage)
-	pkgver = 1.6.0
+	pkgver = 1.6.2
 	pkgrel = 1
 	url = https://github.com/Nerimity/nerimity-desktop
 	install = nerimity-appimage.install
@@ -15,7 +15,5 @@ pkgbase = nerimity-appimage
 	provides = nerimity
 	conflicts = nerimity
 	options = !strip
-	source = nerimity-appimage-1.6.0.AppImage::https://github.com/Nerimity/nerimity-desktop/releases/download/v1.6.0/Nerimity-1.6.0.AppImage
-	sha256sums = SKIP
 
 pkgname = nerimity-appimage

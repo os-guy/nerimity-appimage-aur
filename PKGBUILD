@@ -2,7 +2,7 @@
 # Project By Nerimity Team <https://github.com/Nerimity>
 
 pkgname=nerimity-appimage
-pkgver=1.6.0
+pkgver=1.6.2
 pkgrel=1
 pkgdesc="Nerimity - A modern chat application (AppImage)"
 arch=('x86_64')
@@ -13,9 +13,6 @@ makedepends=('curl' 'jq')
 provides=('nerimity')
 conflicts=('nerimity')
 options=(!strip)
-# Use a fixed source URL for initial build, the actual download happens in prepare()
-source=("${pkgname}-${pkgver}.AppImage::https://github.com/Nerimity/nerimity-desktop/releases/download/v${pkgver}/Nerimity-${pkgver}.AppImage")
-sha256sums=('SKIP')
 install="${pkgname}.install"
 
 pkgver() {
@@ -27,42 +24,28 @@ prepare() {
   # Get the latest version
   local _latest_ver=$(pkgver)
   
-  # If the latest version is different from the current one, try to update the source
-  if [ "${_latest_ver}" != "${pkgver}" ]; then
-    msg2 "Checking for version ${_latest_ver}..."
-    
-    # Check if the URL exists before downloading
-    if curl --output /dev/null --silent --head --fail "https://github.com/Nerimity/nerimity-desktop/releases/download/v${_latest_ver}/Nerimity-${_latest_ver}.AppImage"; then
-      msg2 "Downloading version ${_latest_ver}..."
-      curl -L "https://github.com/Nerimity/nerimity-desktop/releases/download/v${_latest_ver}/Nerimity-${_latest_ver}.AppImage" \
-        -o "${srcdir}/${pkgname}-${_latest_ver}.AppImage"
-      
-      # If download successful, create a symlink
-      if [ -f "${srcdir}/${pkgname}-${_latest_ver}.AppImage" ]; then
-        ln -sf "${pkgname}-${_latest_ver}.AppImage" "${srcdir}/${pkgname}-${pkgver}.AppImage"
-      else
-        msg2 "Download failed, using version ${pkgver} instead."
-      fi
-    else
-      msg2 "Version ${_latest_ver} not found, using version ${pkgver} instead."
-    fi
+  # Set the download URL
+  local _download_url="https://github.com/Nerimity/nerimity-desktop/releases/download/v${_latest_ver}/Nerimity-${_latest_ver}.AppImage"
+  
+  msg2 "Checking for version ${_latest_ver}..."
+  
+  # Check if the URL exists before downloading
+  if curl --output /dev/null --silent --head --fail "${_download_url}"; then
+    msg2 "Downloading version ${_latest_ver}..."
+    curl -L "${_download_url}" -o "${srcdir}/${pkgname}-${_latest_ver}.AppImage"
+    chmod +x "${srcdir}/${pkgname}-${_latest_ver}.AppImage"
+  else
+    error "Version ${_latest_ver} not found. Please check the package version."
+    exit 1
   fi
 }
 
 package() {
   cd "${srcdir}"
   
-  # Determine which AppImage to use
-  local _pkgver=$(pkgver)
-  local _appimage="${pkgname}-${pkgver}.AppImage"
-  
-  # Check if we have a newer version available
-  if [ -f "${pkgname}-${_pkgver}.AppImage" ]; then
-    _appimage="${pkgname}-${_pkgver}.AppImage"
-    msg2 "Using version ${_pkgver}"
-  else
-    msg2 "Using version ${pkgver}"
-  fi
+  # Use the downloaded AppImage
+  local _latest_ver=$(pkgver)
+  local _appimage="${pkgname}-${_latest_ver}.AppImage"
   
   # Create directories
   install -dm755 "${pkgdir}/usr/bin"
@@ -75,7 +58,6 @@ package() {
   install -Dm755 "${_appimage}" "${pkgdir}/opt/${pkgname}/nerimity.AppImage"
   
   # Extract AppImage to get icon and desktop file
-  chmod +x "${_appimage}"
   msg2 "Extracting AppImage to get icon..."
   "./${_appimage}" --appimage-extract
 
