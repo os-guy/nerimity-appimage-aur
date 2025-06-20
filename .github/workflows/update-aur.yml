@@ -25,17 +25,20 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y curl jq build-essential
 
-      - name: Set up SSH key for AUR
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-        run: |
-          mkdir -p ~/.ssh
-          echo "$SSH_PRIVATE_KEY" > ~/.ssh/aur_key
-          chmod 600 ~/.ssh/aur_key
-          eval "$(ssh-agent -s)"
-          ssh-add ~/.ssh/aur_key
-          ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts
-          chmod 644 ~/.ssh/known_hosts
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@v5
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+          git_user_signingkey: true
+          git_commit_gpgsign: true
+
+      - name: Deploy SSH key
+        uses: shimataro/ssh-key-action@v2
+        with:
+          key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          known_hosts: ${{ secrets.AUR_KNOWN_HOSTS }}
+          if_key_exists: replace
 
       - name: Configure Git
         run: |
@@ -118,7 +121,7 @@ jobs:
         if: steps.check-updates.outputs.update_needed == 'true'
         run: |
           # Clone AUR repository to a temporary directory
-          GIT_SSH_COMMAND="ssh -i ~/.ssh/aur_key -o StrictHostKeyChecking=no" git clone ssh://aur@aur.archlinux.org/nerimity-appimage.git aur-repo
+          git clone ssh://aur@aur.archlinux.org/nerimity-appimage.git aur-repo
           
           # Copy updated files to AUR repository
           cp PKGBUILD .SRCINFO nerimity-appimage.install update_srcinfo.sh README.md aur-repo/
@@ -127,4 +130,4 @@ jobs:
           cd aur-repo
           git add .
           git commit -m "Update to version ${{ steps.check-updates.outputs.latest_version }}"
-          GIT_SSH_COMMAND="ssh -i ~/.ssh/aur_key -o StrictHostKeyChecking=no" git push 
+          git push
