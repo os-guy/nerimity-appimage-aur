@@ -1,26 +1,45 @@
-# Nerimity AppImage for Arch Linux
+# Nerimity AppImage AUR Package
 
-This is an AUR package for [Nerimity](https://github.com/Nerimity/nerimity-desktop), a modern chat application.
+This repository maintains the [Nerimity AppImage AUR package](https://aur.archlinux.org/packages/nerimity-appimage).
+
+## Important Note About Repository Structure
+
+This repository uses two branches to handle both AUR and GitHub requirements:
+
+- **master**: Contains only flat files suitable for AUR (no subdirectories)
+- **github**: Contains GitHub Actions workflows and additional files
+
+**For development and contributions, please use the `github` branch:**
+https://github.com/os-guy/nerimity-appimage-aur/tree/github
+
+The `master` branch is automatically updated by GitHub Actions and should not be modified directly.
 
 ## Installation
 
-You can install this package from the AUR using your preferred AUR helper:
-
 ```bash
-# Using yay
 yay -S nerimity-appimage
-
-# Using paru
-paru -S nerimity-appimage
 ```
 
-Or manually:
+Or clone this repository and build the package manually:
 
 ```bash
 git clone https://aur.archlinux.org/nerimity-appimage.git
 cd nerimity-appimage
 makepkg -si
 ```
+
+## Manual Update
+
+You can update the package manually by running:
+
+```bash
+./update_srcinfo.sh
+```
+
+This will:
+1. Check for a new version of Nerimity
+2. Update the PKGBUILD and .SRCINFO files
+3. Commit the changes (but won't push automatically)
 
 ## Usage
 
