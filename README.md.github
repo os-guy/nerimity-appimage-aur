@@ -6,7 +6,7 @@ This repository maintains the [Nerimity AppImage AUR package](https://aur.archli
 
 This repository uses two branches to handle both AUR and GitHub requirements:
 
-- **master**: Contains only flat files suitable for AUR (no subdirectories)
+- **aur**: Contains only flat files suitable for AUR (no subdirectories)
 - **github**: Contains GitHub Actions workflows and additional files
 
 ## Automatic Updates
@@ -68,6 +68,6 @@ This will:
 When making changes to this repository:
 
 1. Make changes to the `github` branch for development
-2. The GitHub Actions workflow will automatically update the `master` branch
-3. Only push flat files to the `master` branch (no subdirectories)
-4. Never push the `.github` directory to the `master` branch or AUR 
+2. The GitHub Actions workflow will automatically update the `aur` branch
+3. Only push flat files to the `aur` branch (no subdirectories)
+4. Never push the `.github` directory to the `aur` branch or AUR 

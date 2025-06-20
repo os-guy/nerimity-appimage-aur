@@ -69,20 +69,20 @@ jobs:
           git commit -m "Update to version ${{ steps.check-updates.outputs.latest_version }}"
           git push origin github
 
-      - name: Update master branch for AUR
+      - name: Update aur branch for AUR
         if: steps.check-updates.outputs.update_needed == 'true'
         run: |
-          # Create a temporary branch from master
-          git fetch origin master
-          git checkout -b temp-master origin/master
+          # Create a temporary branch from aur
+          git fetch origin aur
+          git checkout -b temp-aur origin/aur
           
-          # Copy updated files to master branch
-          cp PKGBUILD .SRCINFO nerimity-appimage.install update_srcinfo.sh README.md temp-master/
+          # Copy updated files to aur branch
+          cp PKGBUILD .SRCINFO nerimity-appimage.install update_srcinfo.sh README.md temp-aur/
           
-          # Commit and push to master
-          git -C temp-master add .
-          git -C temp-master commit -m "Update to version ${{ steps.check-updates.outputs.latest_version }}"
-          git push origin temp-master:master
+          # Commit and push to aur
+          git -C temp-aur add .
+          git -C temp-aur commit -m "Update to version ${{ steps.check-updates.outputs.latest_version }}"
+          git push origin temp-aur:aur
 
       - name: Clone AUR repository
         if: steps.check-updates.outputs.update_needed == 'true'
