@@ -32,22 +32,18 @@ To set up automatic updates from GitHub to AUR:
    - Paste the content of your private key (`~/.ssh/aur_key`) - NOT the .pub file!
    - Make sure to include the entire key including BEGIN and END lines
 
-4. **Add AUR known hosts to GitHub repository secrets**:
-   - Run `ssh-keyscan aur.archlinux.org` on your local machine
-   - Create a new repository secret named `AUR_KNOWN_HOSTS`
-   - Paste the entire output from the ssh-keyscan command
-
-5. **Add Git configuration as repository variables**:
+4. **Add Git configuration as repository variables**:
    - Go to your GitHub repository → Settings → Secrets and variables → Actions → Variables
    - Add the following variables:
-     - `AUR_USERNAME`: Your name for Git commits
-     - `AUR_EMAIL`: Your email for Git commits
+     - `GIT_USERNAME`: Your name for Git commits
+     - `GIT_EMAIL`: Your email for Git commits
 
 The workflow will:
 - Run daily at midnight
 - Check for new Nerimity versions
 - Update the package files if a new version is found
 - Push changes to both GitHub branches and AUR
+- Handle direct AUR updates when needed
 
 ## Installation
 

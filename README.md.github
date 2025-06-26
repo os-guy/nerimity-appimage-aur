@@ -32,29 +32,28 @@ To set up automatic updates from GitHub to AUR:
    - Paste the content of your private key (`~/.ssh/aur_key`) - NOT the .pub file!
    - Make sure to include the entire key including BEGIN and END lines
 
-4. **Add AUR known hosts to GitHub repository secrets**:
-   - Run `ssh-keyscan aur.archlinux.org` on your local machine
-   - Create a new repository secret named `AUR_KNOWN_HOSTS`
-   - Paste the entire output from the ssh-keyscan command
-
-5. **Add Git configuration as repository variables**:
+4. **Add Git configuration as repository variables**:
    - Go to your GitHub repository → Settings → Secrets and variables → Actions → Variables
    - Add the following variables:
-     - `AUR_USERNAME`: Your name for Git commits
-     - `AUR_EMAIL`: Your email for Git commits
+     - `GIT_USERNAME`: Your name for Git commits
+     - `GIT_EMAIL`: Your email for Git commits
 
-6. **Set the default branch to `github`**:
+5. **Set the default branch to `github`**:
    - Go to your GitHub repository → Settings → Branches
    - Change the default branch to `github`
 
-The workflow will:
-- Run daily at midnight
-- Check for new Nerimity versions
-- Update the package files if a new version is found
-- Push changes to both GitHub branches and AUR
-- Maintain proper branch structure (flat files for AUR)
+## Workflow Features
 
-You can also manually trigger the workflow from the Actions tab in your GitHub repository.
+The GitHub Actions workflow includes these key features:
+
+- Runs daily at midnight and can be triggered manually
+- Intelligently checks for updates across GitHub releases and AUR
+- Handles edge cases like direct AUR updates when AUR is outdated but local files are current
+- Uses a modular job structure for better maintainability
+- Provides detailed logging and summary information
+- Properly manages SSH authentication for AUR access
+
+You can manually trigger the workflow from the Actions tab in your GitHub repository.
 
 ## Manual Update
 
