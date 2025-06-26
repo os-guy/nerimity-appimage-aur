@@ -82,13 +82,37 @@ jobs:
             exit 0
           fi
           
-          echo "Current version: $CURRENT_VERSION"
-          echo "Latest version: $LATEST_VERSION"
+          # Also check the version on AUR website
+          echo "Checking version on AUR website..."
+          AUR_VERSION_RESPONSE=$(curl -s "https://aur.archlinux.org/rpc/v5/info/nerimity-appimage" || echo '{"results": [{"Version": "failed"}]}')
           
-          if [ "$CURRENT_VERSION" != "$LATEST_VERSION" ]; then
+          if echo "$AUR_VERSION_RESPONSE" | grep -q "failed"; then
+            echo "Failed to fetch AUR version, will compare against local version only"
+            AUR_VERSION="$CURRENT_VERSION"
+          else
+            # Extract version from AUR response (format is typically like "1.6.2-1")
+            AUR_FULL_VERSION=$(echo "$AUR_VERSION_RESPONSE" | jq -r '.results[0].Version' 2>/dev/null)
+            if [ -z "$AUR_FULL_VERSION" ] || [ "$AUR_FULL_VERSION" == "null" ]; then
+              echo "Failed to parse AUR version, will compare against local version only"
+              AUR_VERSION="$CURRENT_VERSION"
+            else
+              # Extract just the version part before the hyphen (e.g., "1.6.2" from "1.6.2-1")
+              AUR_VERSION=$(echo "$AUR_FULL_VERSION" | cut -d'-' -f1)
+            fi
+          fi
+          
+          echo "Current local version: $CURRENT_VERSION"
+          echo "Current AUR version: $AUR_VERSION"
+          echo "Latest upstream version: $LATEST_VERSION"
+          
+          # Update is needed if either local or AUR version is different from latest
+          if [ "$CURRENT_VERSION" != "$LATEST_VERSION" ] || [ "$AUR_VERSION" != "$LATEST_VERSION" ]; then
+            echo "Update needed!"
             echo "update_needed=true" >> $GITHUB_OUTPUT
             echo "latest_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
+            echo "aur_version=$AUR_VERSION" >> $GITHUB_OUTPUT
           else
+            echo "No update needed. All versions are in sync."
             echo "update_needed=false" >> $GITHUB_OUTPUT
           fi
 
@@ -225,6 +249,10 @@ jobs:
         run: |
           if [ "${{ steps.check-updates.outputs.update_needed }}" == "true" ]; then
             echo "Package updated from $(grep -oP '^pkgver=\K.*' PKGBUILD) to ${{ steps.check-updates.outputs.latest_version }}"
+            
+            if [ "${{ steps.check-updates.outputs.aur_version }}" != "${{ steps.check-updates.outputs.latest_version }}" ]; then
+              echo "AUR version was: ${{ steps.check-updates.outputs.aur_version }}"
+            fi
           else
             echo "No update needed. Current version is up to date."
           fi
