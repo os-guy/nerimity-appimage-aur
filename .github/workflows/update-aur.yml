@@ -175,8 +175,19 @@ jobs:
           else
             if git diff --quiet PKGBUILD .SRCINFO; then
               echo "No changes to local files, but forcing commit to sync with AUR version."
-              # Force a timestamp update to trigger a commit
-              touch PKGBUILD .SRCINFO
+              
+              # Add a timestamp comment to PKGBUILD to force a change
+              TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
+              # First check if there's already a timestamp comment we can replace
+              if grep -q "# Last synchronized:" PKGBUILD; then
+                sed -i "s/# Last synchronized:.*/# Last synchronized: $TIMESTAMP/" PKGBUILD
+              else
+                # Add timestamp at the top after the first comment block
+                sed -i "2i # Last synchronized: $TIMESTAMP" PKGBUILD
+              fi
+              
+              # Also update .SRCINFO to ensure it has a timestamp too
+              touch .SRCINFO
             else
               echo "Changes detected in files. Committing updates."
             fi
@@ -220,8 +231,18 @@ jobs:
           
           if git diff --quiet; then
             echo "No changes detected but forcing update due to AUR version mismatch."
-            # Force a timestamp update to trigger a commit
-            touch PKGBUILD .SRCINFO
+            # Add a timestamp comment to PKGBUILD to force a change
+            TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
+            # First check if there's already a timestamp comment we can replace
+            if grep -q "# Last synchronized:" PKGBUILD; then
+              sed -i "s/# Last synchronized:.*/# Last synchronized: $TIMESTAMP/" PKGBUILD
+            else
+              # Add timestamp at the top after the first comment block
+              sed -i "2i # Last synchronized: $TIMESTAMP" PKGBUILD
+            fi
+            
+            # Also update .SRCINFO to ensure it has a timestamp too
+            touch .SRCINFO
           fi
           
           # Commit and push to aur
@@ -291,8 +312,18 @@ jobs:
           
           if git diff --quiet; then
             echo "No changes detected but forcing update due to AUR version mismatch."
-            # Force a timestamp update to trigger a commit
-            touch PKGBUILD .SRCINFO
+            # Add a timestamp comment to PKGBUILD to force a change
+            TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
+            # First check if there's already a timestamp comment we can replace
+            if grep -q "# Last synchronized:" PKGBUILD; then
+              sed -i "s/# Last synchronized:.*/# Last synchronized: $TIMESTAMP/" PKGBUILD
+            else
+              # Add timestamp at the top after the first comment block
+              sed -i "2i # Last synchronized: $TIMESTAMP" PKGBUILD
+            fi
+            
+            # Also update .SRCINFO to ensure it has a timestamp too
+            touch .SRCINFO
           fi
           
           git add . || { echo "Failed to stage files in AUR repo"; exit 1; }
