@@ -2,7 +2,7 @@
 # Project By Nerimity Team <https://github.com/Nerimity>
 
 pkgname=nerimity-appimage
-pkgver=1.6.2
+pkgver=1.6.3
 pkgrel=1
 pkgdesc="Nerimity - A modern chat application (AppImage)"
 arch=('x86_64')
