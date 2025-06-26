@@ -43,8 +43,22 @@ jobs:
           # Get current version from PKGBUILD
           CURRENT_VERSION=$(grep -oP '^pkgver=\K.*' PKGBUILD)
           
-          # Get latest version from GitHub API
-          LATEST_VERSION=$(curl -s "https://api.github.com/repos/Nerimity/nerimity-desktop/releases/latest" | jq -r .tag_name | sed 's/^v//g')
+          # Get latest version from GitHub API with error handling
+          LATEST_VERSION_RESPONSE=$(curl -s -f "https://api.github.com/repos/Nerimity/nerimity-desktop/releases/latest" || echo '{"tag_name": "failed"}')
+          
+          if echo "$LATEST_VERSION_RESPONSE" | grep -q "failed"; then
+            echo "Failed to fetch latest version from GitHub API"
+            echo "update_needed=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          LATEST_VERSION=$(echo "$LATEST_VERSION_RESPONSE" | jq -r .tag_name | sed 's/^v//g')
+          
+          if [ -z "$LATEST_VERSION" ] || [ "$LATEST_VERSION" == "null" ]; then
+            echo "Failed to parse version from GitHub API response"
+            echo "update_needed=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
           
           echo "Current version: $CURRENT_VERSION"
           echo "Latest version: $LATEST_VERSION"
@@ -58,16 +72,14 @@ jobs:
 
       - name: Update package in github branch
         if: steps.check-updates.outputs.update_needed == 'true'
+        id: update-github
         run: |
           # Update PKGBUILD
           sed -i "s/^pkgver=.*/pkgver=${{ steps.check-updates.outputs.latest_version }}/" PKGBUILD
           sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
           
-          # Install makepkg-template for generating .SRCINFO
-          curl -o /tmp/makepkg-template.tar.gz https://aur.archlinux.org/cgit/aur.git/snapshot/makepkg-template.tar.gz
-          tar -xf /tmp/makepkg-template.tar.gz -C /tmp
-          
-          # Generate .SRCINFO using a simple parser
+          # Generate .SRCINFO directly using the known structure
+          # This avoids dependency on external tools like makepkg-template that might fail
           echo "pkgbase = nerimity-appimage" > .SRCINFO
           echo "	pkgdesc = $(grep -oP '^pkgdesc="\K[^"]+' PKGBUILD)" >> .SRCINFO
           echo "	pkgver = ${{ steps.check-updates.outputs.latest_version }}" >> .SRCINFO
@@ -92,34 +104,61 @@ jobs:
           git add PKGBUILD .SRCINFO
           git commit -m "Update to version ${{ steps.check-updates.outputs.latest_version }}"
           git push origin github
+          echo "github_updated=true" >> $GITHUB_OUTPUT
 
       - name: Update aur branch for AUR
-        if: steps.check-updates.outputs.update_needed == 'true'
+        if: steps.update-github.outputs.github_updated == 'true'
+        id: update-aur-branch
+        continue-on-error: true
         run: |
           # Create a temporary branch from aur
-          git fetch origin aur
+          git fetch origin aur || { echo "Failed to fetch aur branch. It might not exist yet."; exit 1; }
           git checkout -b temp-aur origin/aur
           
           # Copy updated files to aur branch
-          cp PKGBUILD .SRCINFO nerimity-appimage.install update_srcinfo.sh README.md temp-aur/
+          cp PKGBUILD .SRCINFO nerimity-appimage.install update_srcinfo.sh README.md temp-aur/ || { echo "Failed to copy files"; exit 1; }
           
           # Commit and push to aur
           cd temp-aur
-          git add .
-          git commit -m "Update to version ${{ steps.check-updates.outputs.latest_version }}"
-          git push origin HEAD:aur
+          git add . || { echo "Failed to stage files"; exit 1; }
+          git commit -m "Update to version ${{ steps.check-updates.outputs.latest_version }}" || { echo "Nothing to commit"; exit 0; }
+          git push origin HEAD:aur || { echo "Failed to push to aur branch"; exit 1; }
+          echo "aur_branch_updated=true" >> $GITHUB_OUTPUT
 
       - name: Clone AUR repository
         if: steps.check-updates.outputs.update_needed == 'true'
+        id: clone-aur
+        continue-on-error: true
         run: |
           # Clone AUR repository to a temporary directory
-          git clone ssh://aur@aur.archlinux.org/nerimity-appimage.git aur-repo
-          
+          # Use --depth=1 to make it faster and only get the latest commit
+          git clone --depth=1 ssh://aur@aur.archlinux.org/nerimity-appimage.git aur-repo || { echo "Failed to clone AUR repo"; exit 1; }
+          echo "aur_cloned=true" >> $GITHUB_OUTPUT
+
+      - name: Update AUR repository
+        if: steps.clone-aur.outputs.aur_cloned == 'true'
+        run: |
           # Copy updated files to AUR repository
-          cp PKGBUILD .SRCINFO nerimity-appimage.install update_srcinfo.sh README.md aur-repo/
+          cp PKGBUILD .SRCINFO nerimity-appimage.install update_srcinfo.sh README.md aur-repo/ || { echo "Failed to copy files to AUR repo"; exit 1; }
           
           # Commit and push to AUR
           cd aur-repo
-          git add .
-          git commit -m "Update to version ${{ steps.check-updates.outputs.latest_version }}"
-          git push
+          git add . || { echo "Failed to stage files in AUR repo"; exit 1; }
+          git commit -m "Update to version ${{ steps.check-updates.outputs.latest_version }}" || { echo "Nothing to commit to AUR"; exit 0; }
+          
+          # Try to push, handling potential errors
+          git push || {
+            echo "Push failed, trying to pull changes first"
+            git pull --rebase || { echo "Failed to pull/rebase"; exit 1; }
+            git push || { echo "Failed to push after rebase"; exit 1; }
+          }
+          
+          echo "Successfully updated AUR package to version ${{ steps.check-updates.outputs.latest_version }}"
+
+      - name: Summary
+        run: |
+          if [ "${{ steps.check-updates.outputs.update_needed }}" == "true" ]; then
+            echo "Package updated from $(grep -oP '^pkgver=\K.*' PKGBUILD) to ${{ steps.check-updates.outputs.latest_version }}"
+          else
+            echo "No update needed. Current version is up to date."
+          fi
