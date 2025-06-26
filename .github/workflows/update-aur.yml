@@ -13,12 +13,17 @@ on:
 jobs:
   update-package:
     runs-on: ubuntu-latest
+    # Add permissions for GitHub token
+    permissions:
+      contents: write
     steps:
       - name: Checkout GitHub repository
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
           ref: github  # Explicitly checkout the github branch
+          # Use token for authentication
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install dependencies
         run: |
@@ -113,7 +118,11 @@ jobs:
           # Commit changes to GitHub (github branch)
           git add PKGBUILD .SRCINFO
           git commit -m "Update to version ${{ steps.check-updates.outputs.latest_version }}"
+          
+          # Use authenticated HTTPS URL for pushing
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
           git push origin github
+          
           echo "github_updated=true" >> $GITHUB_OUTPUT
 
       - name: Update aur branch for AUR
@@ -138,7 +147,11 @@ jobs:
           git config --global user.email "${{ vars.AUR_EMAIL || 'action@github.com' }}"
           git add . || { echo "Failed to stage files"; exit 1; }
           git commit -m "Update to version ${{ steps.check-updates.outputs.latest_version }}" || { echo "Nothing to commit"; exit 0; }
+          
+          # Use authenticated HTTPS URL for pushing
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
           git push origin HEAD:aur || { echo "Failed to push to aur branch"; exit 1; }
+          
           echo "aur_branch_updated=true" >> $GITHUB_OUTPUT
 
       - name: Clone AUR repository
