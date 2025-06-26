@@ -36,6 +36,12 @@ jobs:
         run: |
           git config --global user.name "${{ vars.AUR_USERNAME }}"
           git config --global user.email "${{ vars.AUR_EMAIL }}"
+          # Make sure these environment variables are set in repository settings
+          if [ -z "${{ vars.AUR_USERNAME }}" ] || [ -z "${{ vars.AUR_EMAIL }}" ]; then
+            echo "Warning: AUR_USERNAME or AUR_EMAIL is not set. Using fallback values."
+            git config --global user.name "GitHub Action Bot"
+            git config --global user.email "action@github.com"
+          fi
 
       - name: Check for updates
         id: check-updates
@@ -74,6 +80,10 @@ jobs:
         if: steps.check-updates.outputs.update_needed == 'true'
         id: update-github
         run: |
+          # Ensure Git is configured for this step
+          git config --global user.name "${{ vars.AUR_USERNAME || 'GitHub Action Bot' }}"
+          git config --global user.email "${{ vars.AUR_EMAIL || 'action@github.com' }}"
+          
           # Update PKGBUILD
           sed -i "s/^pkgver=.*/pkgver=${{ steps.check-updates.outputs.latest_version }}/" PKGBUILD
           sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
@@ -111,6 +121,10 @@ jobs:
         id: update-aur-branch
         continue-on-error: true
         run: |
+          # Ensure Git is configured for this step
+          git config --global user.name "${{ vars.AUR_USERNAME || 'GitHub Action Bot' }}"
+          git config --global user.email "${{ vars.AUR_EMAIL || 'action@github.com' }}"
+          
           # Create a temporary branch from aur
           git fetch origin aur || { echo "Failed to fetch aur branch. It might not exist yet."; exit 1; }
           git checkout -b temp-aur origin/aur
@@ -120,6 +134,8 @@ jobs:
           
           # Commit and push to aur
           cd temp-aur
+          git config --global user.name "${{ vars.AUR_USERNAME || 'GitHub Action Bot' }}"
+          git config --global user.email "${{ vars.AUR_EMAIL || 'action@github.com' }}"
           git add . || { echo "Failed to stage files"; exit 1; }
           git commit -m "Update to version ${{ steps.check-updates.outputs.latest_version }}" || { echo "Nothing to commit"; exit 0; }
           git push origin HEAD:aur || { echo "Failed to push to aur branch"; exit 1; }
@@ -138,11 +154,17 @@ jobs:
       - name: Update AUR repository
         if: steps.clone-aur.outputs.aur_cloned == 'true'
         run: |
+          # Ensure Git is configured for this step
+          git config --global user.name "${{ vars.AUR_USERNAME || 'GitHub Action Bot' }}"
+          git config --global user.email "${{ vars.AUR_EMAIL || 'action@github.com' }}"
+          
           # Copy updated files to AUR repository
           cp PKGBUILD .SRCINFO nerimity-appimage.install update_srcinfo.sh README.md aur-repo/ || { echo "Failed to copy files to AUR repo"; exit 1; }
           
           # Commit and push to AUR
           cd aur-repo
+          git config --local user.name "${{ vars.AUR_USERNAME || 'GitHub Action Bot' }}"
+          git config --local user.email "${{ vars.AUR_EMAIL || 'action@github.com' }}"
           git add . || { echo "Failed to stage files in AUR repo"; exit 1; }
           git commit -m "Update to version ${{ steps.check-updates.outputs.latest_version }}" || { echo "Nothing to commit to AUR"; exit 0; }
           
