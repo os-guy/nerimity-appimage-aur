@@ -36,6 +36,17 @@ jobs:
           key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
           known_hosts: ${{ secrets.AUR_KNOWN_HOSTS }}
           if_key_exists: replace
+          name: id_rsa # Explicitly name the key
+          config: |
+            Host aur.archlinux.org
+              IdentityFile ~/.ssh/id_rsa
+              User aur
+
+      - name: Verify SSH key
+        run: |
+          ssh-add -l
+          echo "Testing AUR SSH connection (will fail safely if not authorized)"
+          ssh -T aur@aur.archlinux.org || true
 
       - name: Configure Git
         run: |
@@ -138,11 +149,11 @@ jobs:
           git fetch origin aur || { echo "Failed to fetch aur branch. It might not exist yet."; exit 1; }
           git checkout -b temp-aur origin/aur
           
-          # Copy updated files to aur branch
-          cp PKGBUILD .SRCINFO nerimity-appimage.install update_srcinfo.sh README.md temp-aur/ || { echo "Failed to copy files"; exit 1; }
+          # Copy updated files to current directory (already in the temp-aur branch)
+          # Instead of trying to copy to a subdirectory, we're already in the right branch
+          cp -f ../PKGBUILD ../SRCINFO ../*.install ../update_srcinfo.sh ../README.md . || { echo "Failed to copy files"; exit 1; }
           
           # Commit and push to aur
-          cd temp-aur
           git config --global user.name "${{ vars.AUR_USERNAME || 'GitHub Action Bot' }}"
           git config --global user.email "${{ vars.AUR_EMAIL || 'action@github.com' }}"
           git add . || { echo "Failed to stage files"; exit 1; }
@@ -152,6 +163,9 @@ jobs:
           git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
           git push origin HEAD:aur || { echo "Failed to push to aur branch"; exit 1; }
           
+          # Return to the github branch
+          git checkout github
+          
           echo "aur_branch_updated=true" >> $GITHUB_OUTPUT
 
       - name: Clone AUR repository
@@ -159,9 +173,24 @@ jobs:
         id: clone-aur
         continue-on-error: true
         run: |
+          # Debug SSH configuration
+          echo "SSH configuration:"
+          cat ~/.ssh/config || echo "No SSH config found"
+          
+          # Ensure SSH agent is running and key is added
+          eval "$(ssh-agent -s)"
+          ssh-add ~/.ssh/id_rsa || echo "Failed to add key to agent"
+          
+          # Test SSH connection before cloning
+          ssh -Tv aur@aur.archlinux.org || echo "SSH test connection failed but continuing"
+          
           # Clone AUR repository to a temporary directory
           # Use --depth=1 to make it faster and only get the latest commit
-          git clone --depth=1 ssh://aur@aur.archlinux.org/nerimity-appimage.git aur-repo || { echo "Failed to clone AUR repo"; exit 1; }
+          GIT_SSH_COMMAND="ssh -vvv" git clone --depth=1 ssh://aur@aur.archlinux.org/nerimity-appimage.git aur-repo || { 
+            echo "Failed to clone AUR repo"
+            echo "aur_cloned=false" >> $GITHUB_OUTPUT
+            exit 0  # Don't fail the workflow
+          }
           echo "aur_cloned=true" >> $GITHUB_OUTPUT
 
       - name: Update AUR repository
@@ -181,11 +210,13 @@ jobs:
           git add . || { echo "Failed to stage files in AUR repo"; exit 1; }
           git commit -m "Update to version ${{ steps.check-updates.outputs.latest_version }}" || { echo "Nothing to commit to AUR"; exit 0; }
           
-          # Try to push, handling potential errors
-          git push || {
+          # Try to push, ensuring SSH agent is used
+          eval "$(ssh-agent -s)"
+          ssh-add ~/.ssh/id_rsa
+          GIT_SSH_COMMAND="ssh -vvv" git push || {
             echo "Push failed, trying to pull changes first"
             git pull --rebase || { echo "Failed to pull/rebase"; exit 1; }
-            git push || { echo "Failed to push after rebase"; exit 1; }
+            GIT_SSH_COMMAND="ssh -vvv" git push || { echo "Failed to push after rebase"; exit 1; }
           }
           
           echo "Successfully updated AUR package to version ${{ steps.check-updates.outputs.latest_version }}"
