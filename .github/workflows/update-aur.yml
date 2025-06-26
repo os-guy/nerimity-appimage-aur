@@ -28,31 +28,46 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl jq build-essential
+          sudo apt-get install -y curl jq build-essential openssh-client
 
-      - name: Deploy SSH key
-        uses: shimataro/ssh-key-action@v2
-        with:
-          key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          known_hosts: ${{ secrets.AUR_KNOWN_HOSTS }}
-          if_key_exists: replace
-          name: id_rsa # Explicitly name the key
-          config: |
-            Host aur.archlinux.org
-              IdentityFile ~/.ssh/id_rsa
-              User aur
-
-      - name: Verify SSH key
+      # Create a dedicated SSH key file from the secret
+      - name: Setup SSH key
         run: |
-          # Start SSH agent first
-          eval "$(ssh-agent -s)"
-          # Add the key to the agent
-          ssh-add ~/.ssh/id_rsa || echo "Failed to add key to agent, but continuing"
-          # Now list the keys
-          ssh-add -l || echo "No keys added to agent, but continuing"
-          # Test SSH connection
-          echo "Testing AUR SSH connection (will fail safely if not authorized)"
-          ssh -T aur@aur.archlinux.org || true
+          mkdir -p ~/.ssh
+          echo "${{ secrets.AUR_SSH_PRIVATE_KEY }}" > ~/.ssh/aur_key
+          chmod 600 ~/.ssh/aur_key
+          
+          # Make sure the key is in the correct format (PEM)
+          # Try to convert if not already in PEM format
+          if ! grep -q "BEGIN" ~/.ssh/aur_key; then
+            echo "Key doesn't appear to be in PEM format, attempting to convert..."
+            mv ~/.ssh/aur_key ~/.ssh/aur_key_raw
+            ssh-keygen -p -m PEM -f ~/.ssh/aur_key_raw -N "" > /dev/null 2>&1 || echo "Conversion failed, may already be in correct format"
+            mv ~/.ssh/aur_key_raw ~/.ssh/aur_key
+          fi
+          
+          # Configure SSH to use this key for AUR
+          echo "Host aur.archlinux.org
+            IdentityFile ~/.ssh/aur_key
+            User aur
+            StrictHostKeyChecking accept-new" > ~/.ssh/config
+          
+          # Add the known hosts
+          echo "${{ secrets.AUR_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
+          
+          # Test the key file
+          ssh-keygen -l -f ~/.ssh/aur_key || echo "Could not read key fingerprint, might be in wrong format"
+          
+          # Set proper permissions on SSH directory
+          chmod 700 ~/.ssh
+          chmod 600 ~/.ssh/config
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Verify SSH connection
+        run: |
+          # Try to connect without using the SSH agent
+          echo "Testing direct SSH connection to AUR..."
+          ssh -v -i ~/.ssh/aur_key -o PasswordAuthentication=no -o BatchMode=yes aur@aur.archlinux.org true || echo "SSH connection test failed but continuing"
 
       - name: Configure Git
         run: |
@@ -64,6 +79,9 @@ jobs:
             git config --global user.name "GitHub Action Bot"
             git config --global user.email "action@github.com"
           fi
+          
+          # Configure Git to use the SSH key directly
+          git config --global core.sshCommand "ssh -i ~/.ssh/aur_key -o StrictHostKeyChecking=accept-new"
 
       - name: Check for updates
         id: check-updates
@@ -262,21 +280,11 @@ jobs:
         id: clone-aur
         continue-on-error: true
         run: |
-          # Start SSH agent first
-          eval "$(ssh-agent -s)"
-          ssh-add ~/.ssh/id_rsa || echo "Failed to add key to agent, but continuing"
-          
-          # Debug SSH configuration
-          echo "SSH configuration:"
-          cat ~/.ssh/config || echo "No SSH config found"
-          
-          # Test SSH connection before cloning
-          ssh -Tv aur@aur.archlinux.org || echo "SSH test connection failed but continuing"
-          
-          # Clone AUR repository to a temporary directory
-          # Use --depth=1 to make it faster and only get the latest commit
-          GIT_SSH_COMMAND="ssh -vvv" git clone --depth=1 ssh://aur@aur.archlinux.org/nerimity-appimage.git aur-repo || { 
-            echo "Failed to clone AUR repo"
+          # Attempt to clone using the SSH key directly without agent
+          echo "Cloning AUR repository..."
+          GIT_SSH_COMMAND="ssh -v -i ~/.ssh/aur_key -o StrictHostKeyChecking=accept-new" \
+          git clone --depth=1 ssh://aur@aur.archlinux.org/nerimity-appimage.git aur-repo || { 
+            echo "Failed to clone AUR repo with direct SSH key"
             echo "aur_cloned=false" >> $GITHUB_OUTPUT
             exit 0  # Don't fail the workflow
           }
@@ -285,10 +293,6 @@ jobs:
       - name: Update AUR repository
         if: steps.clone-aur.outputs.aur_cloned == 'true'
         run: |
-          # Start SSH agent
-          eval "$(ssh-agent -s)"
-          ssh-add ~/.ssh/id_rsa || echo "Failed to add key to agent, but continuing"
-          
           # Ensure Git is configured for this step
           git config --global user.name "${{ vars.AUR_USERNAME || 'GitHub Action Bot' }}"
           git config --global user.email "${{ vars.AUR_EMAIL || 'action@github.com' }}"
@@ -327,11 +331,15 @@ jobs:
           git add . || { echo "Failed to stage files in AUR repo"; exit 1; }
           git commit -m "Update to version ${{ steps.check-updates.outputs.latest_version }}" || { echo "Nothing to commit to AUR"; exit 0; }
           
-          # Try to push, ensuring SSH agent is used
-          GIT_SSH_COMMAND="ssh -vvv" git push || {
+          # Try to push, using direct SSH command
+          GIT_SSH_COMMAND="ssh -v -i ~/.ssh/aur_key -o StrictHostKeyChecking=accept-new" \
+          git push || {
             echo "Push failed, trying to pull changes first"
+            GIT_SSH_COMMAND="ssh -v -i ~/.ssh/aur_key -o StrictHostKeyChecking=accept-new" \
             git pull --rebase || { echo "Failed to pull/rebase"; exit 1; }
-            GIT_SSH_COMMAND="ssh -vvv" git push || { echo "Failed to push after rebase"; exit 1; }
+            
+            GIT_SSH_COMMAND="ssh -v -i ~/.ssh/aur_key -o StrictHostKeyChecking=accept-new" \
+            git push || { echo "Failed to push after rebase"; exit 1; }
           }
           
           echo "Successfully updated AUR package to version ${{ steps.check-updates.outputs.latest_version }}"
