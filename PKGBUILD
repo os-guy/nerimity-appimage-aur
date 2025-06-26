@@ -1,5 +1,6 @@
 # Maintainer: OpenSource Guy <osguy@duck.com>
 # Project By Nerimity Team <https://github.com/Nerimity>
+# Last synchronized: 2025-06-26 15:05:03
 
 pkgname=nerimity-appimage
 pkgver=1.6.3
