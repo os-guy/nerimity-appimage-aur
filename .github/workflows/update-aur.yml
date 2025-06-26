@@ -117,9 +117,18 @@ jobs:
             echo "update_needed=true" >> $GITHUB_OUTPUT
             echo "latest_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
             echo "aur_version=$AUR_VERSION" >> $GITHUB_OUTPUT
+            
+            # Force update even when local files are already up to date if AUR is behind
+            if [ "$AUR_VERSION" != "$LATEST_VERSION" ] && [ "$CURRENT_VERSION" == "$LATEST_VERSION" ]; then
+              echo "AUR version is outdated but local is current. Forcing update to sync AUR."
+              echo "force_update=true" >> $GITHUB_OUTPUT
+            else
+              echo "force_update=false" >> $GITHUB_OUTPUT
+            fi
           else
             echo "No update needed. All versions are in sync."
             echo "update_needed=false" >> $GITHUB_OUTPUT
+            echo "force_update=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Update package in github branch
@@ -129,6 +138,9 @@ jobs:
           # Ensure Git is configured for this step
           git config --global user.name "${{ vars.AUR_USERNAME || 'GitHub Action Bot' }}"
           git config --global user.email "${{ vars.AUR_EMAIL || 'action@github.com' }}"
+          
+          # Store current versions for comparison
+          OLD_VERSION=$(grep -oP '^pkgver=\K.*' PKGBUILD)
           
           # Update PKGBUILD
           sed -i "s/^pkgver=.*/pkgver=${{ steps.check-updates.outputs.latest_version }}/" PKGBUILD
@@ -156,18 +168,32 @@ jobs:
           echo "" >> .SRCINFO
           echo "pkgname = nerimity-appimage" >> .SRCINFO
           
-          # Commit changes to GitHub (github branch)
-          git add PKGBUILD .SRCINFO
-          git commit -m "Update to version ${{ steps.check-updates.outputs.latest_version }}"
-          
-          # Use authenticated HTTPS URL for pushing
-          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
-          git push origin github
-          
-          echo "github_updated=true" >> $GITHUB_OUTPUT
+          # Check if there are any changes to commit
+          if git diff --quiet PKGBUILD .SRCINFO && [ "${{ steps.check-updates.outputs.force_update }}" != "true" ]; then
+            echo "No changes detected in PKGBUILD or .SRCINFO and no force update required."
+            echo "github_updated=false" >> $GITHUB_OUTPUT
+          else
+            if git diff --quiet PKGBUILD .SRCINFO; then
+              echo "No changes to local files, but forcing commit to sync with AUR version."
+              # Force a timestamp update to trigger a commit
+              touch PKGBUILD .SRCINFO
+            else
+              echo "Changes detected in files. Committing updates."
+            fi
+            
+            # Commit changes to GitHub (github branch)
+            git add PKGBUILD .SRCINFO
+            git commit -m "Update to version ${{ steps.check-updates.outputs.latest_version }}"
+            
+            # Use authenticated HTTPS URL for pushing
+            git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+            git push origin github
+            
+            echo "github_updated=true" >> $GITHUB_OUTPUT
+          fi
 
       - name: Update aur branch for AUR
-        if: steps.update-github.outputs.github_updated == 'true'
+        if: steps.update-github.outputs.github_updated == 'true' || steps.check-updates.outputs.force_update == 'true'
         id: update-aur-branch
         continue-on-error: true
         run: |
@@ -182,6 +208,21 @@ jobs:
           # Copy updated files to current directory (already in the temp-aur branch)
           # Instead of trying to copy to a subdirectory, we're already in the right branch
           cp -f ../PKGBUILD ../SRCINFO ../*.install ../update_srcinfo.sh ../README.md . || { echo "Failed to copy files"; exit 1; }
+          
+          # Check if there are any changes to commit
+          if git diff --quiet && [ "${{ steps.check-updates.outputs.force_update }}" != "true" ]; then
+            echo "No changes detected in aur branch and no force update required."
+            echo "aur_branch_updated=false" >> $GITHUB_OUTPUT
+            # Return to the github branch
+            git checkout github
+            exit 0
+          fi
+          
+          if git diff --quiet; then
+            echo "No changes detected but forcing update due to AUR version mismatch."
+            # Force a timestamp update to trigger a commit
+            touch PKGBUILD .SRCINFO
+          fi
           
           # Commit and push to aur
           git config --global user.name "${{ vars.AUR_USERNAME || 'GitHub Action Bot' }}"
@@ -199,7 +240,7 @@ jobs:
           echo "aur_branch_updated=true" >> $GITHUB_OUTPUT
 
       - name: Clone AUR repository
-        if: steps.check-updates.outputs.update_needed == 'true'
+        if: steps.check-updates.outputs.update_needed == 'true' || steps.check-updates.outputs.force_update == 'true'
         id: clone-aur
         continue-on-error: true
         run: |
@@ -241,6 +282,19 @@ jobs:
           cd aur-repo
           git config --local user.name "${{ vars.AUR_USERNAME || 'GitHub Action Bot' }}"
           git config --local user.email "${{ vars.AUR_EMAIL || 'action@github.com' }}"
+          
+          # Check if there are any changes to commit
+          if git diff --quiet && [ "${{ steps.check-updates.outputs.force_update }}" != "true" ]; then
+            echo "No changes detected in AUR repository and no force update required."
+            exit 0
+          fi
+          
+          if git diff --quiet; then
+            echo "No changes detected but forcing update due to AUR version mismatch."
+            # Force a timestamp update to trigger a commit
+            touch PKGBUILD .SRCINFO
+          fi
+          
           git add . || { echo "Failed to stage files in AUR repo"; exit 1; }
           git commit -m "Update to version ${{ steps.check-updates.outputs.latest_version }}" || { echo "Nothing to commit to AUR"; exit 0; }
           
@@ -256,10 +310,18 @@ jobs:
       - name: Summary
         run: |
           if [ "${{ steps.check-updates.outputs.update_needed }}" == "true" ]; then
-            echo "Package updated from $(grep -oP '^pkgver=\K.*' PKGBUILD) to ${{ steps.check-updates.outputs.latest_version }}"
-            
-            if [ "${{ steps.check-updates.outputs.aur_version }}" != "${{ steps.check-updates.outputs.latest_version }}" ]; then
-              echo "AUR version was: ${{ steps.check-updates.outputs.aur_version }}"
+            if [ "${{ steps.update-github.outputs.github_updated }}" == "true" ] || [ "${{ steps.check-updates.outputs.force_update }}" == "true" ]; then
+              echo "Package updated from $(grep -oP '^pkgver=\K.*' PKGBUILD) to ${{ steps.check-updates.outputs.latest_version }}"
+              
+              if [ "${{ steps.check-updates.outputs.aur_version }}" != "${{ steps.check-updates.outputs.latest_version }}" ]; then
+                echo "AUR version was: ${{ steps.check-updates.outputs.aur_version }}"
+              fi
+              
+              if [ "${{ steps.check-updates.outputs.force_update }}" == "true" ]; then
+                echo "Update was forced to sync with AUR version."
+              fi
+            else
+              echo "Update was needed, but files were already up to date. No changes were made."
             fi
           else
             echo "No update needed. Current version is up to date."
