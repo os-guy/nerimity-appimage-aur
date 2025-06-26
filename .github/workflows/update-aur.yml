@@ -113,34 +113,43 @@ jobs:
           
           # Update is needed if either local or AUR version is different from latest
           if [ "$CURRENT_VERSION" != "$LATEST_VERSION" ] || [ "$AUR_VERSION" != "$LATEST_VERSION" ]; then
-            echo "Update needed!"
             echo "update_needed=true" >> $GITHUB_OUTPUT
             echo "latest_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
             echo "aur_version=$AUR_VERSION" >> $GITHUB_OUTPUT
+            
+            # Check if we need to update local files or just push to AUR
+            if [ "$CURRENT_VERSION" != "$LATEST_VERSION" ]; then
+              echo "Local files need to be updated."
+              echo "update_local=true" >> $GITHUB_OUTPUT
+            else
+              echo "Local files are up to date, only AUR needs updating."
+              echo "update_local=false" >> $GITHUB_OUTPUT
+            fi
             
             # Force update even when local files are already up to date if AUR is behind
             if [ "$AUR_VERSION" != "$LATEST_VERSION" ] && [ "$CURRENT_VERSION" == "$LATEST_VERSION" ]; then
               echo "AUR version is outdated but local is current. Forcing update to sync AUR."
               echo "force_update=true" >> $GITHUB_OUTPUT
+              echo "direct_aur_update=true" >> $GITHUB_OUTPUT
             else
               echo "force_update=false" >> $GITHUB_OUTPUT
+              echo "direct_aur_update=false" >> $GITHUB_OUTPUT
             fi
           else
             echo "No update needed. All versions are in sync."
             echo "update_needed=false" >> $GITHUB_OUTPUT
             echo "force_update=false" >> $GITHUB_OUTPUT
+            echo "direct_aur_update=false" >> $GITHUB_OUTPUT
+            echo "update_local=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Update package in github branch
-        if: steps.check-updates.outputs.update_needed == 'true'
+        if: steps.check-updates.outputs.update_local == 'true'
         id: update-github
         run: |
           # Ensure Git is configured for this step
           git config --global user.name "${{ vars.AUR_USERNAME || 'GitHub Action Bot' }}"
           git config --global user.email "${{ vars.AUR_EMAIL || 'action@github.com' }}"
-          
-          # Store current versions for comparison
-          OLD_VERSION=$(grep -oP '^pkgver=\K.*' PKGBUILD)
           
           # Update PKGBUILD
           sed -i "s/^pkgver=.*/pkgver=${{ steps.check-updates.outputs.latest_version }}/" PKGBUILD
@@ -168,43 +177,18 @@ jobs:
           echo "" >> .SRCINFO
           echo "pkgname = nerimity-appimage" >> .SRCINFO
           
-          # Check if there are any changes to commit
-          if git diff --quiet PKGBUILD .SRCINFO && [ "${{ steps.check-updates.outputs.force_update }}" != "true" ]; then
-            echo "No changes detected in PKGBUILD or .SRCINFO and no force update required."
-            echo "github_updated=false" >> $GITHUB_OUTPUT
-          else
-            if git diff --quiet PKGBUILD .SRCINFO; then
-              echo "No changes to local files, but forcing commit to sync with AUR version."
-              
-              # Add a timestamp comment to PKGBUILD to force a change
-              TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
-              # First check if there's already a timestamp comment we can replace
-              if grep -q "# Last synchronized:" PKGBUILD; then
-                sed -i "s/# Last synchronized:.*/# Last synchronized: $TIMESTAMP/" PKGBUILD
-              else
-                # Add timestamp at the top after the first comment block
-                sed -i "2i # Last synchronized: $TIMESTAMP" PKGBUILD
-              fi
-              
-              # Also update .SRCINFO to ensure it has a timestamp too
-              touch .SRCINFO
-            else
-              echo "Changes detected in files. Committing updates."
-            fi
-            
-            # Commit changes to GitHub (github branch)
-            git add PKGBUILD .SRCINFO
-            git commit -m "Update to version ${{ steps.check-updates.outputs.latest_version }}"
-            
-            # Use authenticated HTTPS URL for pushing
-            git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
-            git push origin github
-            
-            echo "github_updated=true" >> $GITHUB_OUTPUT
-          fi
+          # Commit changes to GitHub (github branch)
+          git add PKGBUILD .SRCINFO
+          git commit -m "Update to version ${{ steps.check-updates.outputs.latest_version }}"
+          
+          # Use authenticated HTTPS URL for pushing
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+          git push origin github
+          
+          echo "github_updated=true" >> $GITHUB_OUTPUT
 
       - name: Update aur branch for AUR
-        if: steps.update-github.outputs.github_updated == 'true' || steps.check-updates.outputs.force_update == 'true'
+        if: steps.update-github.outputs.github_updated == 'true' || steps.check-updates.outputs.direct_aur_update == 'true'
         id: update-aur-branch
         continue-on-error: true
         run: |
@@ -216,21 +200,10 @@ jobs:
           git fetch origin aur || { echo "Failed to fetch aur branch. It might not exist yet."; exit 1; }
           git checkout -b temp-aur origin/aur
           
-          # Copy updated files to current directory (already in the temp-aur branch)
-          # Instead of trying to copy to a subdirectory, we're already in the right branch
-          cp -f ../PKGBUILD ../SRCINFO ../*.install ../update_srcinfo.sh ../README.md . || { echo "Failed to copy files"; exit 1; }
-          
-          # Check if there are any changes to commit
-          if git diff --quiet && [ "${{ steps.check-updates.outputs.force_update }}" != "true" ]; then
-            echo "No changes detected in aur branch and no force update required."
-            echo "aur_branch_updated=false" >> $GITHUB_OUTPUT
-            # Return to the github branch
-            git checkout github
-            exit 0
-          fi
-          
-          if git diff --quiet; then
-            echo "No changes detected but forcing update due to AUR version mismatch."
+          if [ "${{ steps.check-updates.outputs.direct_aur_update }}" == "true" ]; then
+            # When doing a direct AUR update, add a timestamp to force a change
+            echo "Performing direct AUR update without local file changes."
+            
             # Add a timestamp comment to PKGBUILD to force a change
             TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
             # First check if there's already a timestamp comment we can replace
@@ -241,8 +214,32 @@ jobs:
               sed -i "2i # Last synchronized: $TIMESTAMP" PKGBUILD
             fi
             
-            # Also update .SRCINFO to ensure it has a timestamp too
-            touch .SRCINFO
+            # Regenerate .SRCINFO to make sure it matches the PKGBUILD
+            # Extract version from PKGBUILD to ensure consistency
+            PKGVER=$(grep -oP '^pkgver=\K.*' PKGBUILD)
+            
+            echo "pkgbase = nerimity-appimage" > .SRCINFO
+            echo "	pkgdesc = $(grep -oP '^pkgdesc="\K[^"]+' PKGBUILD)" >> .SRCINFO
+            echo "	pkgver = $PKGVER" >> .SRCINFO
+            echo "	pkgrel = 1" >> .SRCINFO
+            echo "	url = $(grep -oP '^url="\K[^"]+' PKGBUILD)" >> .SRCINFO
+            echo "	install = nerimity-appimage.install" >> .SRCINFO
+            echo "	arch = x86_64" >> .SRCINFO
+            echo "	license = custom:unknown" >> .SRCINFO
+            echo "	makedepends = curl" >> .SRCINFO
+            echo "	makedepends = jq" >> .SRCINFO
+            echo "	depends = fuse2" >> .SRCINFO
+            echo "	depends = hicolor-icon-theme" >> .SRCINFO
+            echo "	depends = gtk-update-icon-cache" >> .SRCINFO
+            echo "	depends = desktop-file-utils" >> .SRCINFO
+            echo "	provides = nerimity" >> .SRCINFO
+            echo "	conflicts = nerimity" >> .SRCINFO
+            echo "	options = !strip" >> .SRCINFO
+            echo "" >> .SRCINFO
+            echo "pkgname = nerimity-appimage" >> .SRCINFO
+          else
+            # Copy updated files from github branch to aur branch
+            cp -f ../PKGBUILD ../SRCINFO ../*.install ../update_srcinfo.sh ../README.md . || { echo "Failed to copy files"; exit 1; }
           fi
           
           # Commit and push to aur
@@ -261,7 +258,7 @@ jobs:
           echo "aur_branch_updated=true" >> $GITHUB_OUTPUT
 
       - name: Clone AUR repository
-        if: steps.check-updates.outputs.update_needed == 'true' || steps.check-updates.outputs.force_update == 'true'
+        if: steps.check-updates.outputs.update_needed == 'true'
         id: clone-aur
         continue-on-error: true
         run: |
@@ -296,34 +293,35 @@ jobs:
           git config --global user.name "${{ vars.AUR_USERNAME || 'GitHub Action Bot' }}"
           git config --global user.email "${{ vars.AUR_EMAIL || 'action@github.com' }}"
           
-          # Copy updated files to AUR repository
-          cp PKGBUILD .SRCINFO nerimity-appimage.install update_srcinfo.sh README.md aur-repo/ || { echo "Failed to copy files to AUR repo"; exit 1; }
+          # When performing direct AUR update or regular update
+          if [ "${{ steps.check-updates.outputs.direct_aur_update }}" == "true" ]; then
+            # Get the updated files from the aur branch
+            cp -f temp-aur/PKGBUILD temp-aur/.SRCINFO temp-aur/*.install temp-aur/update_srcinfo.sh temp-aur/README.md aur-repo/ || { 
+              echo "Failed to copy files from temp-aur branch"; 
+              # Try using the current files as fallback
+              cp PKGBUILD .SRCINFO *.install update_srcinfo.sh README.md aur-repo/
+            }
+          else
+            # Copy updated files to AUR repository
+            cp PKGBUILD .SRCINFO nerimity-appimage.install update_srcinfo.sh README.md aur-repo/ || { echo "Failed to copy files to AUR repo"; exit 1; }
+          fi
           
           # Commit and push to AUR
           cd aur-repo
           git config --local user.name "${{ vars.AUR_USERNAME || 'GitHub Action Bot' }}"
           git config --local user.email "${{ vars.AUR_EMAIL || 'action@github.com' }}"
           
-          # Check if there are any changes to commit
-          if git diff --quiet && [ "${{ steps.check-updates.outputs.force_update }}" != "true" ]; then
-            echo "No changes detected in AUR repository and no force update required."
-            exit 0
-          fi
-          
-          if git diff --quiet; then
-            echo "No changes detected but forcing update due to AUR version mismatch."
-            # Add a timestamp comment to PKGBUILD to force a change
-            TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
-            # First check if there's already a timestamp comment we can replace
-            if grep -q "# Last synchronized:" PKGBUILD; then
-              sed -i "s/# Last synchronized:.*/# Last synchronized: $TIMESTAMP/" PKGBUILD
-            else
-              # Add timestamp at the top after the first comment block
-              sed -i "2i # Last synchronized: $TIMESTAMP" PKGBUILD
+          # When doing a direct AUR update, we need to force a commit
+          if [ "${{ steps.check-updates.outputs.direct_aur_update }}" == "true" ]; then
+            # Add a timestamp comment to PKGBUILD to force a change if there are no changes
+            if git diff --quiet; then
+              TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
+              if grep -q "# Last synchronized:" PKGBUILD; then
+                sed -i "s/# Last synchronized:.*/# Last synchronized: $TIMESTAMP/" PKGBUILD
+              else
+                sed -i "2i # Last synchronized: $TIMESTAMP" PKGBUILD
+              fi
             fi
-            
-            # Also update .SRCINFO to ensure it has a timestamp too
-            touch .SRCINFO
           fi
           
           git add . || { echo "Failed to stage files in AUR repo"; exit 1; }
@@ -341,18 +339,20 @@ jobs:
       - name: Summary
         run: |
           if [ "${{ steps.check-updates.outputs.update_needed }}" == "true" ]; then
-            if [ "${{ steps.update-github.outputs.github_updated }}" == "true" ] || [ "${{ steps.check-updates.outputs.force_update }}" == "true" ]; then
-              echo "Package updated from $(grep -oP '^pkgver=\K.*' PKGBUILD) to ${{ steps.check-updates.outputs.latest_version }}"
+            if [ "${{ steps.update-github.outputs.github_updated }}" == "true" ] || [ "${{ steps.check-updates.outputs.direct_aur_update }}" == "true" ]; then
+              echo "Package version: ${{ steps.check-updates.outputs.latest_version }}"
               
               if [ "${{ steps.check-updates.outputs.aur_version }}" != "${{ steps.check-updates.outputs.latest_version }}" ]; then
                 echo "AUR version was: ${{ steps.check-updates.outputs.aur_version }}"
               fi
               
-              if [ "${{ steps.check-updates.outputs.force_update }}" == "true" ]; then
-                echo "Update was forced to sync with AUR version."
+              if [ "${{ steps.check-updates.outputs.direct_aur_update }}" == "true" ]; then
+                echo "Direct AUR update performed (local files were already up to date)."
+              else
+                echo "Full update performed (local and AUR files were updated)."
               fi
             else
-              echo "Update was needed, but files were already up to date. No changes were made."
+              echo "Update was needed, but operation failed or was skipped."
             fi
           else
             echo "No update needed. Current version is up to date."
