@@ -44,7 +44,13 @@ jobs:
 
       - name: Verify SSH key
         run: |
-          ssh-add -l
+          # Start SSH agent first
+          eval "$(ssh-agent -s)"
+          # Add the key to the agent
+          ssh-add ~/.ssh/id_rsa || echo "Failed to add key to agent, but continuing"
+          # Now list the keys
+          ssh-add -l || echo "No keys added to agent, but continuing"
+          # Test SSH connection
           echo "Testing AUR SSH connection (will fail safely if not authorized)"
           ssh -T aur@aur.archlinux.org || true
 
@@ -197,13 +203,13 @@ jobs:
         id: clone-aur
         continue-on-error: true
         run: |
+          # Start SSH agent first
+          eval "$(ssh-agent -s)"
+          ssh-add ~/.ssh/id_rsa || echo "Failed to add key to agent, but continuing"
+          
           # Debug SSH configuration
           echo "SSH configuration:"
           cat ~/.ssh/config || echo "No SSH config found"
-          
-          # Ensure SSH agent is running and key is added
-          eval "$(ssh-agent -s)"
-          ssh-add ~/.ssh/id_rsa || echo "Failed to add key to agent"
           
           # Test SSH connection before cloning
           ssh -Tv aur@aur.archlinux.org || echo "SSH test connection failed but continuing"
@@ -220,6 +226,10 @@ jobs:
       - name: Update AUR repository
         if: steps.clone-aur.outputs.aur_cloned == 'true'
         run: |
+          # Start SSH agent
+          eval "$(ssh-agent -s)"
+          ssh-add ~/.ssh/id_rsa || echo "Failed to add key to agent, but continuing"
+          
           # Ensure Git is configured for this step
           git config --global user.name "${{ vars.AUR_USERNAME || 'GitHub Action Bot' }}"
           git config --global user.email "${{ vars.AUR_EMAIL || 'action@github.com' }}"
@@ -235,8 +245,6 @@ jobs:
           git commit -m "Update to version ${{ steps.check-updates.outputs.latest_version }}" || { echo "Nothing to commit to AUR"; exit 0; }
           
           # Try to push, ensuring SSH agent is used
-          eval "$(ssh-agent -s)"
-          ssh-add ~/.ssh/id_rsa
           GIT_SSH_COMMAND="ssh -vvv" git push || {
             echo "Push failed, trying to pull changes first"
             git pull --rebase || { echo "Failed to pull/rebase"; exit 1; }
