@@ -4,80 +4,291 @@ on:
   schedule:
     - cron: '0 0 * * *'  # Run daily at midnight
   workflow_dispatch:  # Allow manual triggering
+  push:
+    branches:
+      - github
+    paths-ignore:
+      - '.github/**'  # Avoid recursion
 
 jobs:
-  update-package:
+  check-for-updates:
     runs-on: ubuntu-latest
+    outputs:
+      update_needed: ${{ steps.check.outputs.update_needed }}
+      latest_version: ${{ steps.check.outputs.latest_version }}
+      aur_version: ${{ steps.check.outputs.aur_version }}
+      local_version: ${{ steps.check.outputs.local_version }}
+      direct_aur_update: ${{ steps.check.outputs.direct_aur_update }}
+    
     steps:
-      - name: Checkout GitHub repository
+      - name: Checkout repository
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0
-
+          fetch-depth: 1
+          ref: github
+      
       - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y curl jq base-devel
-
-      - name: Set up SSH key for AUR
-        uses: webfactory/ssh-agent@v0.7.0
-        with:
-          ssh-private-key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-
-      - name: Configure Git
-        run: |
-          git config --global user.name "${{ vars.AUR_USERNAME }}"
-          git config --global user.email "${{ vars.AUR_EMAIL }}"
-
-      - name: Check for updates
-        id: check-updates
+        run: sudo apt-get install -y curl jq
+      
+      - name: Check versions
+        id: check
         run: |
           # Get current version from PKGBUILD
-          CURRENT_VERSION=$(grep -oP '^pkgver=\K.*' PKGBUILD)
+          LOCAL_VERSION=$(grep -oP '^pkgver=\K.*' PKGBUILD)
+          echo "local_version=$LOCAL_VERSION" >> $GITHUB_OUTPUT
           
           # Get latest version from GitHub API
-          LATEST_VERSION=$(curl -s "https://api.github.com/repos/Nerimity/nerimity-desktop/releases/latest" | jq -r .tag_name | sed 's/^v//g')
-          
-          echo "Current version: $CURRENT_VERSION"
-          echo "Latest version: $LATEST_VERSION"
-          
-          if [ "$CURRENT_VERSION" != "$LATEST_VERSION" ]; then
-            echo "update_needed=true" >> $GITHUB_OUTPUT
-            echo "latest_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
-          else
+          GITHUB_API_RESPONSE=$(curl -s -f "https://api.github.com/repos/Nerimity/nerimity-desktop/releases/latest")
+          if [ $? -ne 0 ]; then
+            echo "Failed to fetch data from GitHub API"
             echo "update_needed=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          LATEST_VERSION=$(echo "$GITHUB_API_RESPONSE" | jq -r .tag_name | sed 's/^v//g')
+          if [ -z "$LATEST_VERSION" ] || [ "$LATEST_VERSION" == "null" ]; then
+            echo "Failed to parse version from GitHub API"
+            echo "update_needed=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          echo "latest_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
+          
+          # Get AUR version
+          AUR_API_RESPONSE=$(curl -s "https://aur.archlinux.org/rpc/v5/info/nerimity-appimage")
+          if [ $? -ne 0 ]; then
+            echo "Failed to fetch data from AUR API, using local version as reference"
+            AUR_VERSION="$LOCAL_VERSION"
+          else
+            AUR_FULL_VERSION=$(echo "$AUR_API_RESPONSE" | jq -r '.results[0].Version' 2>/dev/null)
+            if [ -z "$AUR_FULL_VERSION" ] || [ "$AUR_FULL_VERSION" == "null" ]; then
+              echo "Failed to parse AUR version, using local version as reference"
+              AUR_VERSION="$LOCAL_VERSION"
+            else
+              AUR_VERSION=$(echo "$AUR_FULL_VERSION" | cut -d'-' -f1)
+            fi
+          fi
+          echo "aur_version=$AUR_VERSION" >> $GITHUB_OUTPUT
+          
+          # Print version information
+          echo "Current local version: $LOCAL_VERSION"
+          echo "Current AUR version: $AUR_VERSION"
+          echo "Latest upstream version: $LATEST_VERSION"
+          
+          # Determine if update is needed
+          if [ "$LOCAL_VERSION" != "$LATEST_VERSION" ] || [ "$AUR_VERSION" != "$LATEST_VERSION" ]; then
+            echo "update_needed=true" >> $GITHUB_OUTPUT
+            
+            # Check if we need a direct AUR update (local is current, AUR is outdated)
+            if [ "$LOCAL_VERSION" == "$LATEST_VERSION" ] && [ "$AUR_VERSION" != "$LATEST_VERSION" ]; then
+              echo "Local files are current, but AUR is outdated. Will perform direct AUR update."
+              echo "direct_aur_update=true" >> $GITHUB_OUTPUT
+            else
+              echo "direct_aur_update=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "No update needed. All versions are in sync."
+            echo "update_needed=false" >> $GITHUB_OUTPUT
+            echo "direct_aur_update=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Update package
-        if: steps.check-updates.outputs.update_needed == 'true'
+  update-github-branch:
+    needs: check-for-updates
+    if: ${{ needs.check-for-updates.outputs.update_needed == 'true' && needs.check-for-updates.outputs.direct_aur_update != 'true' }}
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 1
+          ref: github
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Configure Git
+        run: |
+          git config --global user.name "${{ vars.GIT_USERNAME }}"
+          git config --global user.email "${{ vars.GIT_EMAIL }}"
+      
+      - name: Update PKGBUILD and SRCINFO
         run: |
           # Update PKGBUILD
-          sed -i "s/^pkgver=.*/pkgver=${{ steps.check-updates.outputs.latest_version }}/" PKGBUILD
+          sed -i "s/^pkgver=.*/pkgver=${{ needs.check-for-updates.outputs.latest_version }}/" PKGBUILD
           sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
           
           # Generate .SRCINFO
-          makepkg --printsrcinfo > .SRCINFO
+          echo "pkgbase = nerimity-appimage" > .SRCINFO
+          echo "	pkgdesc = $(grep -oP '^pkgdesc="\K[^"]+' PKGBUILD)" >> .SRCINFO
+          echo "	pkgver = ${{ needs.check-for-updates.outputs.latest_version }}" >> .SRCINFO
+          echo "	pkgrel = 1" >> .SRCINFO
+          echo "	url = $(grep -oP '^url="\K[^"]+' PKGBUILD)" >> .SRCINFO
+          echo "	install = nerimity-appimage.install" >> .SRCINFO
+          echo "	arch = x86_64" >> .SRCINFO
+          echo "	license = custom:unknown" >> .SRCINFO
+          echo "	makedepends = curl" >> .SRCINFO
+          echo "	makedepends = jq" >> .SRCINFO
+          echo "	depends = fuse2" >> .SRCINFO
+          echo "	depends = hicolor-icon-theme" >> .SRCINFO
+          echo "	depends = gtk-update-icon-cache" >> .SRCINFO
+          echo "	depends = desktop-file-utils" >> .SRCINFO
+          echo "	provides = nerimity" >> .SRCINFO
+          echo "	conflicts = nerimity" >> .SRCINFO
+          echo "	options = !strip" >> .SRCINFO
+          echo "" >> .SRCINFO
+          echo "pkgname = nerimity-appimage" >> .SRCINFO
           
-          # Commit changes to GitHub
+          # Add timestamp for tracking
+          TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
+          if grep -q "# Last updated:" PKGBUILD; then
+            sed -i "s/# Last updated:.*/# Last updated: $TIMESTAMP/" PKGBUILD
+          else
+            sed -i "3i # Last updated: $TIMESTAMP" PKGBUILD
+          fi
+      
+      - name: Commit and push changes
+        run: |
           git add PKGBUILD .SRCINFO
-          git commit -m "Update to version ${{ steps.check-updates.outputs.latest_version }}"
+          git commit -m "Update to version ${{ needs.check-for-updates.outputs.latest_version }}"
           git push
 
-      - name: Clone AUR repository
-        if: steps.check-updates.outputs.update_needed == 'true'
+  update-aur-branch:
+    needs: [check-for-updates, update-github-branch]
+    if: |
+      always() && 
+      needs.check-for-updates.outputs.update_needed == 'true' && 
+      (needs.update-github-branch.result == 'success' || needs.check-for-updates.outputs.direct_aur_update == 'true')
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # Need full history to handle both branches
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Configure Git
         run: |
-          # Make sure SSH knows about aur.archlinux.org
+          git config --global user.name "${{ vars.GIT_USERNAME }}"
+          git config --global user.email "${{ vars.GIT_EMAIL }}"
+      
+      - name: Sync aur branch with github branch
+        run: |
+          # Fetch both branches
+          git fetch origin github
+          git fetch origin aur || echo "aur branch might not exist yet"
+          
+          # Check if aur branch exists
+          if git show-ref --verify --quiet refs/remotes/origin/aur; then
+            # Branch exists, create from it
+            git checkout -b temp-aur origin/aur
+          else
+            # Create new branch
+            git checkout -b temp-aur
+          fi
+          
+          # If doing direct AUR update, get files from github branch
+          if [ "${{ needs.check-for-updates.outputs.direct_aur_update }}" == "true" ]; then
+            # Reset to github branch content
+            git reset --hard origin/github
+            
+            # Add timestamp for tracking
+            TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
+            if grep -q "# Last synchronized:" PKGBUILD; then
+              sed -i "s/# Last synchronized:.*/# Last synchronized: $TIMESTAMP/" PKGBUILD
+            else
+              sed -i "3i # Last synchronized: $TIMESTAMP" PKGBUILD
+            fi
+            
+            # Commit the timestamp change
+            git add PKGBUILD
+            git commit -m "Sync with github branch - version ${{ needs.check-for-updates.outputs.latest_version }}"
+          else
+            # Reset to github branch content
+            git reset --hard origin/github
+          fi
+          
+          # Push to aur branch
+          git push -f origin temp-aur:aur
+
+  update-aur-repository:
+    needs: [check-for-updates, update-aur-branch]
+    if: ${{ always() && needs.check-for-updates.outputs.update_needed == 'true' && needs.update-aur-branch.result == 'success' }}
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          ref: aur
+          fetch-depth: 1
+      
+      - name: Setup SSH key
+        run: |
           mkdir -p ~/.ssh
-          ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts
+          echo "${{ secrets.AUR_SSH_PRIVATE_KEY }}" > ~/.ssh/aur_key
+          chmod 600 ~/.ssh/aur_key
           
-          # Clone AUR repository to a temporary directory
-          git clone ssh://aur@aur.archlinux.org/nerimity-appimage.git aur-repo
+          # Configure SSH
+          cat > ~/.ssh/config << EOF
+          Host aur.archlinux.org
+            IdentityFile ~/.ssh/aur_key
+            User aur
+            StrictHostKeyChecking no
+          EOF
           
-          # Copy updated files to AUR repository
-          cp PKGBUILD .SRCINFO nerimity-appimage.install update_srcinfo.sh README.md aur-repo/
+          chmod 600 ~/.ssh/config
+      
+      - name: Test SSH connection
+        run: |
+          # Display debug info
+          ssh -i ~/.ssh/aur_key -T aur@aur.archlinux.org || echo "SSH test connection completed with expected non-zero exit code"
+      
+      - name: Clone and update AUR repository
+        run: |
+          # Configure Git
+          git config --global user.name "${{ vars.GIT_USERNAME }}"
+          git config --global user.email "${{ vars.GIT_EMAIL }}"
           
-          # Commit and push to AUR
+          # Clone AUR repo
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/aur_key -o StrictHostKeyChecking=no" \
+          git clone ssh://aur@aur.archlinux.org/nerimity-appimage.git aur-repo || { 
+            echo "Failed to clone AUR repository"
+            exit 1
+          }
+          
+          # Copy all files to AUR repo
+          cp -f PKGBUILD .SRCINFO *.install update_srcinfo.sh README.md aur-repo/
+          
+          # Commit and push changes
           cd aur-repo
+          git config --local user.name "${{ vars.GIT_USERNAME }}"
+          git config --local user.email "${{ vars.GIT_EMAIL }}"
+          
+          # Use custom commit message based on update type
+          if [ "${{ needs.check-for-updates.outputs.direct_aur_update }}" == "true" ]; then
+            COMMIT_MSG="Sync with upstream - version ${{ needs.check-for-updates.outputs.latest_version }} (direct AUR update)"
+          else
+            COMMIT_MSG="Update to version ${{ needs.check-for-updates.outputs.latest_version }}"
+          fi
+          
+          # Add, commit and push
           git add .
-          git commit -m "Update to version ${{ steps.check-updates.outputs.latest_version }}"
-          git push 
+          git commit -m "$COMMIT_MSG" || echo "No changes to commit"
+          
+          # Push using the SSH key directly
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/aur_key -o StrictHostKeyChecking=no" \
+          git push || {
+            echo "Push failed, trying to pull and rebase first"
+            GIT_SSH_COMMAND="ssh -i ~/.ssh/aur_key -o StrictHostKeyChecking=no" git pull --rebase
+            GIT_SSH_COMMAND="ssh -i ~/.ssh/aur_key -o StrictHostKeyChecking=no" git push
+          }
+      
+      - name: Summary
+        run: |
+          echo "Successfully updated AUR package to version ${{ needs.check-for-updates.outputs.latest_version }}"
+          
+          if [ "${{ needs.check-for-updates.outputs.direct_aur_update }}" == "true" ]; then
+            echo "Direct AUR update performed (local version was already current)"
+            echo "Previous AUR version: ${{ needs.check-for-updates.outputs.aur_version }}"
+          else
+            echo "Full update performed (both local and AUR repositories updated)"
+          fi

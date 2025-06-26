@@ -2,21 +2,20 @@
 
 This repository maintains the [Nerimity AppImage AUR package](https://aur.archlinux.org/packages/nerimity-appimage).
 
-## Important Note About Repository Structure
+## Repository Structure
 
 This repository uses two branches to handle both AUR and GitHub requirements:
 
 - **aur**: Contains only flat files suitable for AUR (no subdirectories)
 - **github**: Contains GitHub Actions workflows and additional files
 
-**For development and contributions, please use the `github` branch:**
-https://github.com/os-guy/nerimity-appimage-aur/tree/github
+## Automatic Updates
 
-The `aur` branch is automatically updated by GitHub Actions and should not be modified directly.
+This repository includes GitHub Actions workflow to automatically check for new versions of Nerimity and update the AUR package accordingly.
 
-## Automatic Updates Setup
+### Setup Instructions
 
-This package uses GitHub Actions for automatic updates. To set it up:
+To set up automatic updates from GitHub to AUR:
 
 1. **Generate an SSH key pair for AUR**:
    ```bash
@@ -33,12 +32,18 @@ This package uses GitHub Actions for automatic updates. To set it up:
    - Paste the content of your private key (`~/.ssh/aur_key`) - NOT the .pub file!
    - Make sure to include the entire key including BEGIN and END lines
 
-4. **Add AUR known hosts to GitHub repository secrets**:
-   - Run `ssh-keyscan aur.archlinux.org` on your local machine
-   - Create a new repository secret named `AUR_KNOWN_HOSTS`
-   - Paste the entire output from the ssh-keyscan command
+4. **Add Git configuration as repository variables**:
+   - Go to your GitHub repository → Settings → Secrets and variables → Actions → Variables
+   - Add the following variables:
+     - `GIT_USERNAME`: Your name for Git commits
+     - `GIT_EMAIL`: Your email for Git commits
 
-See the `github` branch README for more detailed instructions.
+The workflow will:
+- Run daily at midnight
+- Check for new Nerimity versions
+- Update the package files if a new version is found
+- Push changes to both GitHub branches and AUR
+- Handle direct AUR updates when needed
 
 ## Installation
 
@@ -66,6 +71,15 @@ This will:
 1. Check for a new version of Nerimity
 2. Update the PKGBUILD and .SRCINFO files
 3. Commit the changes (but won't push automatically)
+
+## Development
+
+When making changes to this repository:
+
+1. Make changes to the `github` branch for development
+2. The GitHub Actions workflow will automatically update the `aur` branch
+3. Only push flat files to the `aur` branch (no subdirectories)
+4. Never push the `.github` directory to the `aur` branch or AUR
 
 ## Usage
 

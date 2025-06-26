@@ -2,6 +2,13 @@
 
 This repository maintains the [Nerimity AppImage AUR package](https://aur.archlinux.org/packages/nerimity-appimage).
 
+## Repository Structure
+
+This repository uses two branches to handle both AUR and GitHub requirements:
+
+- **aur**: Contains only flat files suitable for AUR (no subdirectories)
+- **github**: Contains GitHub Actions workflows and additional files
+
 ## Automatic Updates
 
 This repository includes GitHub Actions workflow to automatically check for new versions of Nerimity and update the AUR package accordingly.
@@ -22,24 +29,31 @@ To set up automatic updates from GitHub to AUR:
 3. **Add the private key to GitHub repository secrets**:
    - Go to your GitHub repository → Settings → Secrets and variables → Actions
    - Create a new repository secret named `AUR_SSH_PRIVATE_KEY`
-   - Paste the content of your private key (`~/.ssh/aur_key`)
+   - Paste the content of your private key (`~/.ssh/aur_key`) - NOT the .pub file!
+   - Make sure to include the entire key including BEGIN and END lines
 
 4. **Add Git configuration as repository variables**:
    - Go to your GitHub repository → Settings → Secrets and variables → Actions → Variables
    - Add the following variables:
-     - `AUR_USERNAME`: Your name for Git commits
-     - `AUR_EMAIL`: Your email for Git commits
+     - `GIT_USERNAME`: Your name for Git commits
+     - `GIT_EMAIL`: Your email for Git commits
 
-5. **Upload the workflow file**:
-   - Upload the `update-aur.yml` file to `.github/workflows/` in your GitHub repository
+5. **Set the default branch to `github`**:
+   - Go to your GitHub repository → Settings → Branches
+   - Change the default branch to `github`
 
-The workflow will:
-- Run daily at midnight
-- Check for new Nerimity versions
-- Update the package files if a new version is found
-- Push changes to both GitHub and AUR
+## Workflow Features
 
-You can also manually trigger the workflow from the Actions tab in your GitHub repository.
+The GitHub Actions workflow includes these key features:
+
+- Runs daily at midnight and can be triggered manually
+- Intelligently checks for updates across GitHub releases and AUR
+- Handles edge cases like direct AUR updates when AUR is outdated but local files are current
+- Uses a modular job structure for better maintainability
+- Provides detailed logging and summary information
+- Properly manages SSH authentication for AUR access
+
+You can manually trigger the workflow from the Actions tab in your GitHub repository.
 
 ## Manual Update
 
@@ -52,4 +66,13 @@ You can also update the package manually by running:
 This will:
 1. Check for a new version of Nerimity
 2. Update the PKGBUILD and .SRCINFO files
-3. Commit the changes (but won't push automatically) 
+3. Commit the changes (but won't push automatically)
+
+## Development
+
+When making changes to this repository:
+
+1. Make changes to the `github` branch for development
+2. The GitHub Actions workflow will automatically update the `aur` branch
+3. Only push flat files to the `aur` branch (no subdirectories)
+4. Never push the `.github` directory to the `aur` branch or AUR 
