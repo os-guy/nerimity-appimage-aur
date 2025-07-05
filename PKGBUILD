@@ -1,8 +1,9 @@
 # Maintainer: OpenSource Guy <osguy@duck.com>
 # Project By Nerimity Team <https://github.com/Nerimity>
+# Last updated: 2025-07-05 01:43:19
 
 pkgname=nerimity-appimage
-pkgver=1.6.3
+pkgver=1.6.4
 pkgrel=1
 pkgdesc="Nerimity - A modern chat application (AppImage)"
 arch=('x86_64')
